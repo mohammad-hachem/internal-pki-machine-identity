@@ -46,6 +46,55 @@ Arrows show responsibilities and information flow, not permanent network connect
 
 Separate the root, issuing, and publication roles to limit key exposure. This logical separation does not itself provide high availability: issuance continuity, publication redundancy, database recovery, and trust-store distribution each need their own operating procedures. See Smallstep's [production considerations](https://smallstep.com/docs/step-ca/certificate-authority-server-production/).
 
+## How PKI fits into the identity and secrets architecture
+
+PKI, user identity, application identity, and secrets management address different parts of the same access model. The following integration design keeps those responsibilities explicit.
+
+| Component | Responsibility | Boundary |
+|---|---|---|
+| **Internal PKI / step-ca** | Issue certificates for machines and services; support TLS and mTLS | Certificate authentication still requires an authorization policy |
+| **Keycloak** | User SSO and MFA; OIDC/SAML application integration; service-account tokens for applications acting on their own behalf | Applications and APIs must validate tokens and enforce permissions |
+| **Passbolt** | Controlled storage and sharing of operational passwords and secrets; integration through supported APIs and tooling | Target-system rotation and workload delivery require explicit integration |
+| **Workload secrets management** | Deliver application credentials and manage their replacement or expiry | Dynamic credentials, leases, and automatic rotation depend on the selected backend and integration |
+| **Certificate inventory** | Track certificate owners, algorithms, expiry, and dependencies | Store metadata and references, never private keys or secret values |
+
+Keycloak supports standards-based application integration and service accounts. See its [application security overview](https://www.keycloak.org/securing-apps/overview) and [documentation](https://www.keycloak.org/documentation). Passbolt provides credential sharing and API/CLI integration; verify capabilities against the selected edition and release. See [Passbolt's product overview](https://www.passbolt.com/).
+
+### Logical integration
+
+```mermaid
+flowchart TB
+    U["User"] -->|"Sign in"| K["Keycloak"]
+    K -->|"User authentication via OIDC"| A["Application"]
+    A -->|"Access token over mTLS"| B["Backend API"]
+    K -->|"Service-account token when appropriate"| A
+    P["Internal PKI"] -->|"Service certificates"| A
+    P -->|"Service certificates"| B
+    S["Workload secrets delivery"] -->|"Scoped runtime credentials"| A
+    O["Authorized operator"] -->|"Retrieve or share operational credentials"| V["Passbolt"]
+    V -.->|"Optional controlled integration"| S
+```
+
+These are logical relationships, not a claim of an already deployed integration. The workload-secrets component represents a capability, not a requirement to buy another product. The dotted connection represents an optional integration that must define workload authentication, access policy, and credential handling.
+
+### One request, several checks
+
+1. A user signs in through Keycloak using the configured authentication policy.
+2. The application uses the appropriate OIDC flow for user authentication and obtains an access token for the intended API. An unattended service can instead use an appropriately scoped service account.
+3. The application connects to the backend over mTLS, establishing the identities of the communicating services.
+4. The API validates the access token's signature, issuer, audience, and lifetime, then enforces the required scopes or roles.
+5. Where both checks are required, the API also enforces the intended relationship between the calling service and the token context.
+
+An ID token is not a substitute for an API access token. Likewise, carrying a bearer token over mTLS does not automatically bind that token to the client certificate; sender-constrained tokens require explicit protocol support and configuration.
+
+### Secrets lifecycle and access boundaries
+
+Use Passbolt for controlled operational credential access and supported automation integrations. For runtime secrets, define how the workload authenticates, which secrets it can retrieve, how delivery avoids logs and source control, and how the consuming application adopts replacements.
+
+Updating a stored password is not the same as rotating it in the target database or service. A complete rotation workflow changes the target credential, updates the consumer, verifies access, and retires the old credential safely. Short-lived dynamic credentials require a backend that can issue and revoke them.
+
+Keep CA signing keys under dedicated key-protection procedures rather than treating them as ordinary shared operational secrets. Define independent emergency access and recovery procedures so an identity-provider outage does not lock operators out of recovering the identity and secrets services themselves.
+
 ## Identity and issuance policy
 
 Define an identity before issuing its certificate:
