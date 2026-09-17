@@ -1,7 +1,7 @@
 # Internal PKI and Machine Identity
 ## step-ca · ACME · mTLS · Certificate Inventory
 
-Based on my hands-on experience designing and implementing an internal PKI, this reference architecture explains trust management, certificate lifecycle workflows, and machine identity.
+I designed and implemented the internal PKI myself, including the CA hierarchy and ACME issuance and renewal work. Here I explain the design in my own terms: where I would draw the trust boundaries, how I would manage certificates beyond issuance, and how the pieces fit into a wider identity architecture.
 
 **Scope:** The examples are independent and use fictional names. They disclose no employer or customer environment, private keys, internal configurations, or production measurements. Renewal automation and mTLS are described as architectural workflows, not as claims of deployment in this example.
 
@@ -126,7 +126,7 @@ If HTTP-01 challenges pass through a shared reverse proxy, route each challenge 
 
 ### Renewal automation workflow
 
-A renewal design must cover the full path from requesting a replacement to the application using it:
+I tested ACME issuance and renewal myself. For unattended renewal, I would take the acceptance check one step further: does the running service actually present the replacement certificate? A new file on disk is only part of the job. That is why this workflow includes the service reload and an endpoint check:
 
 - Schedule the selected ACME client's renewal process before expiry, with retries and timing variation.
 - Validate the replacement certificate, chain, identity, and key match.
@@ -157,7 +157,7 @@ A certificate issued by a trusted CA is not permission to access every service. 
 
 ## Revocation and compromise response
 
-A revocation record at the CA does not automatically terminate established connections or cause every application to reject an existing certificate. Smallstep describes passive revocation as blocking subsequent renewal; relying parties need a separate policy for rejecting certificates before expiry. [Smallstep revocation guidance](https://smallstep.com/docs/step-ca/revocation/).
+The question I would ask during a revocation review is simple: what will actually make the application reject this certificate? A record at the CA does not close existing connections. Smallstep's passive revocation blocks future renewal, but rejection before expiry depends on the relying party's policy. I would want the answer documented for each client or proxy, including what happens when revocation information is stale or unavailable. [Smallstep revocation guidance](https://smallstep.com/docs/step-ca/revocation/).
 
 For CRL-based enforcement, use the selected release's supported CRL configuration, publish signed lists, and ensure relying parties actually check them. Define refresh intervals, cache behavior, and the response to an unavailable or stale CRL.
 
@@ -165,7 +165,7 @@ For a compromised workload key, disable its enrollment path as appropriate, revo
 
 ## Deploy alongside a certificate inventory
 
-**A managed internal PKI should be deployed alongside a maintained certificate inventory.** Issuance records show what the CA created; endpoint discovery shows what services actually use. Neither view alone is sufficient.
+**I would deploy certificate inventory alongside the PKI, not leave it for a later cleanup project.** When a certificate needs replacing, I want to know who owns the service, where the certificate is installed, and what depends on it. CA records show what was issued; endpoint discovery shows what is actually being served. I would keep both views.
 
 Reconcile CA records, authorized endpoint scans, configuration records, and application-owner input. Include public-CA certificates and unmanaged or self-signed certificates where they exist.
 
@@ -218,4 +218,12 @@ Deploying `step-ca`, using mTLS, or shortening certificate lifetimes does **not*
 - Exercise trust rollover and recovery before an emergency.
 - Treat certificate ownership and inventory accuracy as continuing operational responsibilities.
 
-This repository focuses on architecture and operational reasoning. Examples of automation and integration can be developed independently without publishing production configuration.
+## What I'd tell someone starting this
+
+- **I'd name an owner before issuing a certificate.** Someone needs to receive the alert and know how to replace it.
+- **I'd check the live endpoint after renewal.** I want to see the new certificate in use, not just a successful command.
+- **I'd ask what revocation does at the application.** The CA's answer is only one part of that question.
+- **I'd document how to recover access.** If the CA or identity provider is unavailable, I still need a controlled way to restore it.
+- **I'd start PQC preparation with an inventory I can act on.** Give me the service owner, algorithms, dependencies, and replacement path before a claim that the platform is quantum-ready.
+
+I have kept production configuration out of this repository. The aim is to make the design decisions useful to someone building their own environment.
